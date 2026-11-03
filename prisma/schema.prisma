@@ -1,0 +1,342 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  IN_REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model User {
+  id            String    @id @unique @default(cuid())
+  email         String?   @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  avatar        String?
+  role          String    @default("Product Designer")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  createdTasks     Task[]            @relation("CreatedTasks")
+  assignedTasks    Task[]            @relation("AssignedTasks")
+  workspaceMembers WorkspaceMember[]
+  comments         TaskComment[]
+  activities       ActivityLog[]
+  chatMessages         ChatMessage[]
+  aiAssistantSessions  AIAssistantSession[]
+}
+
+model Workspace {
+  id          String   @id @unique @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  color       String   @default("#6366f1")
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members      WorkspaceMember[]
+  projects     Project[]
+  chatMessages ChatMessage[]
+}
+
+model WorkspaceMember {
+  id          String     @id @unique @default(cuid())
+  workspaceId String
+  userId      String
+  role        MemberRole @default(MEMBER)
+  joinedAt    DateTime   @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+}
+
+model Project {
+  id          String   @id @unique @default(cuid())
+  name        String
+  description String?
+  color       String   @default("#6366f1")
+  icon        String   @default("FolderKanban")
+  workspaceId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tasks        Task[]
+  chatMessages ChatMessage[]
+}
+
+model Task {
+  id          String       @id @unique @default(cuid())
+  title       String
+  description String?      @db.Text
+  status      TaskStatus   @default(TODO)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+  order       Int          @default(0)
+  completed   Boolean      @default(false)
+  completedAt DateTime?
+
+  projectId  String
+  creatorId  String
+  assigneeId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator    User          @relation("CreatedTasks", fields: [creatorId], references: [id])
+  assignee   User?         @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  subtasks   Subtask[]
+  comments            TaskComment[]
+  activities          ActivityLog[]
+  aiAssistantSessions AIAssistantSession[]
+  meta                TaskMeta?
+}
+
+model Subtask {
+  id        String   @id @unique @default(cuid())
+  title     String
+  completed Boolean  @default(false)
+  taskId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model TaskComment {
+  id        String   @id @unique @default(cuid())
+  content   String   @db.Text
+  taskId    String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id        String   @id @unique @default(cuid())
+  action    String
+  details   String?
+  taskId    String
+  userId    String
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ChatMessage {
+  id          String   @id @unique @default(cuid())
+  content     String   @db.Text
+  workspaceId String
+  projectId   String?
+  senderId    String
+  type        String   @default("PROJECT_CHAT") // "PROJECT_CHAT" | "TEAM_DISCUSSION"
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  project   Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sender    User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                String  @id @unique @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @unique @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model JoinRequest {
+  id            String   @id @unique @default(cuid())
+  workspaceId   String
+  workspaceName String
+  userId        String
+  userName      String
+  userEmail     String
+  userAvatar    String?
+  status        String   @default("PENDING")
+  requestedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model WorkspaceInvitation {
+  id             String   @id @unique @default(cuid())
+  token          String   @unique
+  workspaceId    String
+  workspaceName  String
+  email          String
+  name           String
+  role           String   @default("MEMBER")
+  title          String   @default("Team Member")
+  invitedById    String?
+  invitedByName  String?
+  invitedByEmail String?
+  status         String   @default("PENDING")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model BoardColumn {
+  id          String   @id @unique @default(cuid())
+  workspaceId String
+  status      String
+  label       String
+  color       String
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([workspaceId, status])
+}
+
+model SystemSetting {
+  key       String   @id @unique
+  value     String   @db.Text
+  updatedAt DateTime @default(now()) @updatedAt
+}
+
+model AIAssistantSession {
+  id        String   @id @unique @default(cuid())
+  userId    String
+  title     String
+  taskId    String?
+  model     String   @default("gemini-3.8-flash")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task     Task?                @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messages AIAssistantMessage[]
+
+  @@index([userId])
+  @@index([taskId])
+}
+
+model AIAssistantMessage {
+  id        String   @id @unique @default(cuid())
+  sessionId String
+  sender    String   // "user" | "ai"
+  text      String   @db.Text
+  sources   Json?    // Array rujukan [{ sourceType, sourceId, snippet, similarity }]
+  createdAt DateTime @default(now())
+
+  session AIAssistantSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
+
+model Flowchart {
+  id          String   @id @unique
+  workspaceId String
+  userId      String?
+  creatorName String?
+  title       String
+  description String?  @db.Text
+  prompt      String?  @db.Text
+  nodes       Json     @default("[]")
+  edges       Json     @default("[]")
+  comments    Json?    @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model Whiteboard {
+  id          String   @id @unique
+  workspaceId String
+  userId      String?
+  creatorName String?
+  title       String
+  description String?  @db.Text
+  elements    Json     @default("[]")
+  comments    Json?    @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model ChatReadReceipt {
+  id        String   @id @unique @default(cuid())
+  userId    String
+  chatKey   String
+  timestamp BigInt   @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, chatKey])
+  @@index([userId])
+}
+
+model TaskMeta {
+  taskId          String   @id @unique
+  collaboratorIds Json?    @default("[]")
+  tags            Json?    @default("[]")
+  visibility      String?  @default("WORKSPACE")
+  updatedAt       DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
