@@ -3,6 +3,6 @@ services:
     image: ghcr.io/din-27/udin.kinetic.task.management.backend:latest
     restart: always
     ports:
-      - "3000:5000"
+      - "5000:5000"
     env_file:
       - .env
