@@ -1,6 +1,6 @@
 services:
   web:
-    image: ghcr.io/din-27/Udin.Kinetic.Task.Management.Backend:latest
+    image: ghcr.io/din-27/udin.kinetic.task.management.backend:latest
     restart: always
     ports:
       - "3000:5000"
