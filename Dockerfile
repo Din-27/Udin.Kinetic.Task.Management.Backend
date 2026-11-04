@@ -4,6 +4,7 @@ WORKDIR /app
 
 # Install dependencies lebih cepat via lockfile
 COPY package*.json ./
+COPY prisma ./prisma/
 RUN npm ci
 
 # Copy seluruh source code dan build
@@ -17,13 +18,16 @@ ENV NODE_ENV=production
 
 # Install hanya dependencies production
 COPY package*.json ./
+COPY prisma ./prisma/
 RUN npm ci --only=production && npm cache clean --force
 
-# Copy hasil build dari stage 1
+# Copy hasil generate Prisma & hasil build dari stage 1
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/dist ./dist
 
 # Non-root user untuk keamanan
 USER node
 
-EXPOSE 3000
-CMD ["node", "dist/main.js"]
+EXPOSE 5000
+CMD ["node", "dist/index.js"]
