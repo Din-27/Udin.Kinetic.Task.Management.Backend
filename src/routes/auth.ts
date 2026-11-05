@@ -8,8 +8,9 @@ const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "kinetic-secret-key-googl
 
 /**
  * Mendekripsi session token terenkripsi NextAuth v4 (JWE AES-256-GCM via HKDF)
+ * Mendukung cookie HTTPS (__Secure-next-auth.session-token), HTTP, serta variasi secret.
  */
-function decryptNextAuthToken(token: string, secret: string): any | null {
+function decryptNextAuthToken(token: string, explicitSecret?: string): any | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 5) {
@@ -17,29 +18,64 @@ function decryptNextAuthToken(token: string, secret: string): any | null {
     }
 
     const [headerB64, , ivB64, ciphertextB64, tagB64] = parts;
-    const key = crypto.hkdfSync(
-      "sha256",
-      Buffer.from(secret),
-      Buffer.from(""),
-      Buffer.from("NextAuth.js Generated Encryption Key"),
-      32
-    );
-
     const iv = Buffer.from(ivB64, "base64url");
     const ciphertext = Buffer.from(ciphertextB64, "base64url");
     const tag = Buffer.from(tagB64, "base64url");
     const aad = Buffer.from(headerB64, "ascii");
 
-    const decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(key), iv);
-    decipher.setAuthTag(tag);
-    decipher.setAAD(aad);
+    const candidateSecrets = Array.from(
+      new Set(
+        [
+          explicitSecret,
+          process.env.NEXTAUTH_SECRET,
+          "kinetic-secret-key-google-sso-32-chars-long",
+          "kinetic-dev-secret-key-32-chars",
+        ].filter((s): s is string => Boolean(s && s.trim()))
+      )
+    );
 
-    const decrypted = Buffer.concat([
-      decipher.update(ciphertext),
-      decipher.final(),
-    ]);
+    const candidateSalts = [
+      "__Secure-next-auth.session-token",
+      "next-auth.session-token",
+      "sessionToken",
+      "",
+    ];
 
-    return JSON.parse(decrypted.toString("utf-8"));
+    for (const secret of candidateSecrets) {
+      for (const salt of candidateSalts) {
+        try {
+          const info = salt
+            ? `NextAuth.js Generated Encryption Key (${salt})`
+            : "NextAuth.js Generated Encryption Key";
+
+          const key = crypto.hkdfSync(
+            "sha256",
+            Buffer.from(secret),
+            Buffer.from(salt),
+            Buffer.from(info),
+            32
+          );
+
+          const decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(key), iv);
+          decipher.setAuthTag(tag);
+          decipher.setAAD(aad);
+
+          const decrypted = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+          ]);
+
+          const parsed = JSON.parse(decrypted.toString("utf-8"));
+          if (parsed && typeof parsed === "object") {
+            return parsed;
+          }
+        } catch {
+          // Lanjut ke kombinasi salt & secret berikutnya
+        }
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
