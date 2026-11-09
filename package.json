@@ -14,7 +14,7 @@
     "db:rag-migrate": "tsx src/scripts/migrate-rag.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1154.0",
+    "@aws-sdk/client-s3": "^3.1163.0",
     "@google/genai": "^2.31.0",
     "@prisma/client": "^5.22.0",
     "cors": "^2.8.5",
