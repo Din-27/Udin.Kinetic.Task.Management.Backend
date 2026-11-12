@@ -1,10 +1,29 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
+import path from "path";
+import crypto from "crypto";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 const router = Router();
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+const ALLOWED_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".pdf",
+  ".txt",
+  ".csv",
+  ".md",
+  ".json",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+  ".zip",
+]);
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -27,14 +46,21 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       });
     }
 
+    const ext = path.extname(file.originalname || "").toLowerCase();
+    if (!ext || !ALLOWED_EXTENSIONS.has(ext)) {
+      return res.status(400).json({
+        error: `Format file "${ext}" tidak diizinkan. Hanya file dokumen dan gambar umum yang diperbolehkan.`,
+      });
+    }
+
     const region = process.env.AWS_REGION || "us-east-2";
     const bucket = process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET_NAME || "default";
     const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
     const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
     const endpoint = process.env.AWS_ENDPOINT_URL_S3 || process.env.AWS_ENDPOINT;
 
-    const cleanFilename = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const s3Key = `tasks/${Date.now()}-${cleanFilename}`;
+    const safeBasename = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 50);
+    const s3Key = `tasks/${Date.now()}-${crypto.randomBytes(6).toString("hex")}-${safeBasename}${ext}`;
     const isImage = file.mimetype.startsWith("image/");
 
     if (accessKeyId && secretAccessKey) {

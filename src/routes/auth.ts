@@ -4,11 +4,11 @@ import { prisma } from "../lib/prisma.js";
 import { getDefaultAvatar } from "../types/index.js";
 
 const router = Router();
-const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "kinetic-secret-key-google-sso-32-chars-long";
+const NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "";
 
 /**
  * Mendekripsi session token terenkripsi NextAuth v4 (JWE AES-256-GCM via HKDF)
- * Mendukung cookie HTTPS (__Secure-next-auth.session-token), HTTP, serta variasi secret.
+ * Mendukung cookie HTTPS (__Secure-next-auth.session-token), HTTP, serta secret valid.
  */
 function decryptNextAuthToken(token: string, explicitSecret?: string): any | null {
   try {
@@ -28,8 +28,6 @@ function decryptNextAuthToken(token: string, explicitSecret?: string): any | nul
         [
           explicitSecret,
           process.env.NEXTAUTH_SECRET,
-          "kinetic-secret-key-google-sso-32-chars-long",
-          "kinetic-dev-secret-key-32-chars",
         ].filter((s): s is string => Boolean(s && s.trim()))
       )
     );
@@ -81,13 +79,14 @@ function decryptNextAuthToken(token: string, explicitSecret?: string): any | nul
   }
 }
 
-/**
- * GET & POST /api/auth/session
- * Mengembalikan sesi aktif dari database server (BE).
- * Mendukung cookie next-auth.session-token terenkripsi JWE (Google OAuth, Azure AD, Mock),
- * database session Prisma, Bearer token, dan fallback user ID/email.
- */
-router.all("/session", async (req: Request, res: Response) => {
+export async function authenticateRequest(req: Request): Promise<{
+  id: string;
+  name: string | null;
+  email: string | null;
+  image?: string | null;
+  role: string;
+  expires?: string;
+} | null> {
   try {
     const authHeader = req.headers.authorization;
     const cookieHeader = req.headers.cookie;
@@ -115,180 +114,116 @@ router.all("/session", async (req: Request, res: Response) => {
       }
     }
 
-    if (sessionToken) {
-      // 1. Cek di tabel Session Prisma jika sessionToken ada di database
-      const dbSession = await prisma.session.findUnique({
-        where: { sessionToken },
-        include: { user: true },
-      });
+    if (!sessionToken) return null;
 
-      if (dbSession && dbSession.user && new Date(dbSession.expires) > new Date()) {
-        return res.status(200).json({
-          user: {
-            id: dbSession.user.id,
-            name: dbSession.user.name,
-            email: dbSession.user.email,
-            image: dbSession.user.image || dbSession.user.avatar,
-            role: dbSession.user.role,
-          },
-          expires: dbSession.expires.toISOString(),
-        });
-      }
+    // 1. Cek di tabel Session Prisma jika sessionToken ada di database
+    const dbSession = await prisma.session.findUnique({
+      where: { sessionToken },
+      include: { user: true },
+    });
 
-      // 2. Dekripsi JWE token NextAuth (digunakan oleh Google OAuth, Mock, Azure AD)
-      const decrypted = decryptNextAuthToken(sessionToken, NEXTAUTH_SECRET);
-      if (decrypted) {
-        const email = decrypted.email as string | undefined;
-        const sub = (decrypted.sub || decrypted.id) as string | undefined;
-        const name = decrypted.name || (email ? email.split("@")[0] : "User");
-        const picture = decrypted.picture || decrypted.image;
-
-        if (email || sub) {
-          // Cari atau buat user di database Prisma
-          let user = await prisma.user.findFirst({
-            where: {
-              OR: [
-                ...(sub ? [{ id: sub }] : []),
-                ...(email ? [{ email }] : []),
-              ],
-            },
-          });
-
-          if (!user && email) {
-            user = await prisma.user.create({
-              data: {
-                id: sub || `usr-${Date.now()}`,
-                email,
-                name,
-                image: picture,
-                avatar: picture || getDefaultAvatar(name, email),
-                role: "MEMBER",
-              },
-            });
-          }
-
-          if (user) {
-            // Pastikan session tercatat di tabel Session Prisma
-            const expires = decrypted.exp
-              ? new Date(decrypted.exp * 1000)
-              : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-            // Simpan record session jika belum ada
-            const existingSession = await prisma.session.findFirst({
-              where: { userId: user.id },
-            });
-
-            if (!existingSession) {
-              await prisma.session.create({
-                data: {
-                  sessionToken,
-                  userId: user.id,
-                  expires,
-                },
-              }).catch(() => {});
-            }
-
-            return res.status(200).json({
-              user: {
-                id: user.id,
-                name: user.name,
-                email: user.email,
-                image: user.image || user.avatar || picture,
-                role: user.role,
-              },
-              expires: expires.toISOString(),
-            });
-          }
-        }
-      }
-
-      // 3. Jika token adalah ID pengguna langsung (e.g. usr-...)
-      if (sessionToken.startsWith("usr-")) {
-        const user = await prisma.user.findUnique({ where: { id: sessionToken } });
-        if (user) {
-          return res.status(200).json({
-            user: {
-              id: user.id,
-              name: user.name,
-              email: user.email,
-              image: user.image || user.avatar,
-              role: user.role,
-            },
-            expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-          });
-        }
-      }
-
-      // 4. Coba parse jika token berupa JWT payload unencrypted (header.payload.signature)
-      try {
-        const parts = sessionToken.split(".");
-        if (parts.length === 3) {
-          const payloadJson = Buffer.from(parts[1], "base64").toString("utf-8");
-          const payload = JSON.parse(payloadJson);
-          const targetId = payload?.id || payload?.sub;
-          const targetEmail = payload?.email;
-
-          if (targetId || targetEmail) {
-            const user = await prisma.user.findFirst({
-              where: {
-                OR: [
-                  ...(targetId ? [{ id: targetId }] : []),
-                  ...(targetEmail ? [{ email: targetEmail }] : []),
-                ],
-              },
-            });
-
-            if (user) {
-              return res.status(200).json({
-                user: {
-                  id: user.id,
-                  name: user.name,
-                  email: user.email,
-                  image: user.image || user.avatar,
-                  role: user.role,
-                },
-                expires: payload.exp
-                  ? new Date(payload.exp * 1000).toISOString()
-                  : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-              });
-            }
-          }
-        }
-      } catch {
-        // Abaikan
-      }
+    if (dbSession && dbSession.user && new Date(dbSession.expires) > new Date()) {
+      return {
+        id: dbSession.user.id,
+        name: dbSession.user.name,
+        email: dbSession.user.email,
+        image: dbSession.user.image || dbSession.user.avatar,
+        role: dbSession.user.role,
+        expires: dbSession.expires.toISOString(),
+      };
     }
 
-    // 5. Fallback identitas user dari headers atau query params
-    const headerUserId = (req.headers["x-user-id"] as string) || (req.query.userId as string);
-    const headerEmail = (req.headers["x-user-email"] as string) || (req.query.email as string);
+    // 2. Dekripsi JWE token NextAuth (digunakan oleh Google OAuth, Mock, Azure AD)
+    const decrypted = decryptNextAuthToken(sessionToken, NEXTAUTH_SECRET);
+    if (decrypted) {
+      const email = decrypted.email as string | undefined;
+      const sub = (decrypted.sub || decrypted.id) as string | undefined;
+      const name = decrypted.name || (email ? email.split("@")[0] : "User");
+      const picture = decrypted.picture || decrypted.image;
 
-    if (headerUserId || headerEmail) {
-      const user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            ...(headerUserId ? [{ id: headerUserId }] : []),
-            ...(headerEmail ? [{ email: headerEmail }] : []),
-          ],
-        },
-      });
+      if (email || sub) {
+        // Cari atau buat user di database Prisma
+        let user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              ...(sub ? [{ id: sub }] : []),
+              ...(email ? [{ email }] : []),
+            ],
+          },
+        });
 
-      if (user) {
-        return res.status(200).json({
-          user: {
+        if (!user && email) {
+          user = await prisma.user.create({
+            data: {
+              id: sub || `usr-${Date.now()}`,
+              email,
+              name,
+              image: picture,
+              avatar: picture || getDefaultAvatar(name, email),
+              role: "MEMBER",
+            },
+          });
+        }
+
+        if (user) {
+          const expires = decrypted.exp
+            ? new Date(decrypted.exp * 1000)
+            : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+          const existingSession = await prisma.session.findFirst({
+            where: { userId: user.id },
+          });
+
+          if (!existingSession) {
+            await prisma.session.create({
+              data: {
+                sessionToken,
+                userId: user.id,
+                expires,
+              },
+            }).catch(() => {});
+          }
+
+          return {
             id: user.id,
             name: user.name,
             email: user.email,
-            image: user.image || user.avatar,
+            image: user.image || user.avatar || picture,
             role: user.role,
-          },
-          expires: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        });
+            expires: expires.toISOString(),
+          };
+        }
       }
     }
 
+    return null;
+  } catch (err) {
+    console.error("[Authenticate Request Error]:", err);
+    return null;
+  }
+}
+
+/**
+ * GET & POST /api/auth/session
+ * Mengembalikan sesi aktif dari database server (BE).
+ */
+router.all("/session", async (req: Request, res: Response) => {
+  try {
+    const auth = await authenticateRequest(req);
+    if (auth) {
+      return res.status(200).json({
+        user: {
+          id: auth.id,
+          name: auth.name,
+          email: auth.email,
+          image: auth.image,
+          role: auth.role,
+        },
+        expires: auth.expires,
+      });
+    }
+
     // Default NextAuth format saat unauthenticated:
-    // Mengembalikan object kosong `{}` dengan status 200
     return res.status(200).json({});
   } catch (error: any) {
     console.error("[Auth Session Error]:", error);
@@ -306,7 +241,7 @@ const handleSignIn = async (req: Request, res: Response) => {
     const email = (req.body?.email || req.query.email as string || "").trim().toLowerCase();
     const name = (req.body?.name || req.query.name as string || "").trim() || email.split("@")[0] || "User";
     const image = (req.body?.image || req.body?.avatar as string || "").trim();
-    const role = (req.body?.role || req.query.role as string || "MEMBER").trim();
+    const role = "MEMBER"; // Default role aman, cegah privilege escalation melalui payload publik
 
     if (!email && !id) {
       return res.status(400).json({ error: "Email atau user ID wajib diisi" });
@@ -330,7 +265,7 @@ const handleSignIn = async (req: Request, res: Response) => {
           name,
           image: image || null,
           avatar: image || getDefaultAvatar(name, email),
-          role,
+          role: "MEMBER",
         },
       });
     } else if (image && !user.image) {

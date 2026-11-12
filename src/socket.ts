@@ -65,16 +65,18 @@ export function setupSocketIO(httpServer: HttpServer, corsOrigin: string = "*"):
     // Client sends a new comment via Socket
     socket.on("new-comment", (payload: { taskId: string; workspaceId?: string; comment: any; taskTitle?: string }) => {
       if (payload?.taskId && payload?.comment) {
-        // Broadcast exclusively to OTHER connected clients in the same task room or workspace
-        socket.broadcast.emit("comment-received", payload);
+        if (payload.workspaceId) {
+          socket.to(`ws:${payload.workspaceId}`).emit("comment-received", payload);
+        } else {
+          socket.to(`task:${payload.taskId}`).emit("comment-received", payload);
+        }
       }
     });
 
     // Client sends a new chat/discussion message via Socket
     socket.on("new-chat-message", (payload: { workspaceId?: string; projectId?: string | null; message: any }) => {
-      if (payload?.message) {
-        // Broadcast exclusively to OTHER connected clients (never to sender)
-        socket.broadcast.emit("chat-message-received", payload);
+      if (payload?.message && payload?.workspaceId) {
+        socket.to(`ws:${payload.workspaceId}`).emit("chat-message-received", payload);
       }
     });
 
@@ -98,7 +100,7 @@ export function setupSocketIO(httpServer: HttpServer, corsOrigin: string = "*"):
       taskId?: string;
     }) => {
       if (payload?.workspaceId && payload?.targetUserId) {
-        socket.broadcast.emit("user-mentioned-received", payload);
+        socket.to(`ws:${payload.workspaceId}`).emit("user-mentioned-received", payload);
       }
     });
 
@@ -204,19 +206,21 @@ export function setupSocketIO(httpServer: HttpServer, corsOrigin: string = "*"):
         const room = `flowchart:${payload.diagramId}`;
         io.to(room).emit("flowchart-comment-received", payload);
 
-        // Otomatis simpan ke tabel Flowchart
+        // Otomatis simpan ke tabel Flowchart secara transaksional
         try {
-          const rec = await prisma.flowchart.findFirst({
-            where: { id: payload.diagramId },
-          });
-          if (rec) {
-            const comments: any[] = Array.isArray(rec.comments) ? (rec.comments as any) : [];
-            comments.push(payload.comment);
-            await prisma.flowchart.update({
-              where: { id: rec.id },
-              data: { comments: comments as any },
+          await prisma.$transaction(async (tx) => {
+            const rec = await tx.flowchart.findFirst({
+              where: { id: payload.diagramId },
             });
-          }
+            if (rec) {
+              const comments: any[] = Array.isArray(rec.comments) ? (rec.comments as any) : [];
+              comments.push(payload.comment);
+              await tx.flowchart.update({
+                where: { id: rec.id },
+                data: { comments: comments as any },
+              });
+            }
+          });
         } catch (e) {
           console.error("[Socket.IO] Gagal menyimpan komentar flowchart:", e);
         }
@@ -333,19 +337,21 @@ export function setupSocketIO(httpServer: HttpServer, corsOrigin: string = "*"):
         const room = `whiteboard:${payload.whiteboardId}`;
         io.to(room).emit("whiteboard-comment-received", payload);
 
-        // Otomatis simpan ke tabel Whiteboard
+        // Otomatis simpan ke tabel Whiteboard secara transaksional
         try {
-          const rec = await prisma.whiteboard.findFirst({
-            where: { id: payload.whiteboardId },
-          });
-          if (rec) {
-            const comments: any[] = Array.isArray(rec.comments) ? (rec.comments as any) : [];
-            comments.push(payload.comment);
-            await prisma.whiteboard.update({
-              where: { id: rec.id },
-              data: { comments: comments as any },
+          await prisma.$transaction(async (tx) => {
+            const rec = await tx.whiteboard.findFirst({
+              where: { id: payload.whiteboardId },
             });
-          }
+            if (rec) {
+              const comments: any[] = Array.isArray(rec.comments) ? (rec.comments as any) : [];
+              comments.push(payload.comment);
+              await tx.whiteboard.update({
+                where: { id: rec.id },
+                data: { comments: comments as any },
+              });
+            }
+          });
         } catch (e) {
           console.error("[Socket.IO] Gagal menyimpan komentar whiteboard:", e);
         }

@@ -9,6 +9,7 @@ import {
 } from "../lib/data-service.js";
 import { prisma } from "../lib/prisma.js";
 import { User } from "../types/index.js";
+import { authenticateRequest } from "./auth.js";
 
 const router = Router();
 
@@ -132,6 +133,23 @@ router.patch("/", async (req: Request, res: Response) => {
     if (!body.id) {
       return res.status(400).json({ error: "ID workspace wajib disertakan" });
     }
+
+    const authUser = await authenticateRequest(req);
+    if (authUser) {
+      const ws = await prisma.workspace.findFirst({
+        where: { OR: [{ id: body.id }, { slug: body.id }] },
+        include: { members: true },
+      });
+      if (ws) {
+        const isOwner = ws.createdBy === authUser.id || ws.createdBy === authUser.email;
+        const memberRec = ws.members.find((m) => m.userId === authUser.id);
+        const isAdminMember = memberRec?.role === "ADMIN" || authUser.role === "ADMIN";
+        if (!isOwner && !isAdminMember) {
+          return res.status(403).json({ error: "Hanya pemilik atau admin yang dapat mengubah pengaturan workspace ini" });
+        }
+      }
+    }
+
     const updated = await updateWorkspace(body.id, body.updates || {});
     if (!updated) {
       return res.status(404).json({ error: "Workspace tidak ditemukan" });
@@ -148,6 +166,23 @@ router.delete("/", async (req: Request, res: Response) => {
     if (!id) {
       return res.status(400).json({ error: "ID workspace wajib disertakan" });
     }
+
+    const authUser = await authenticateRequest(req);
+    if (authUser) {
+      const ws = await prisma.workspace.findFirst({
+        where: { OR: [{ id }, { slug: id }] },
+        include: { members: true },
+      });
+      if (ws) {
+        const isOwner = ws.createdBy === authUser.id || ws.createdBy === authUser.email;
+        const memberRec = ws.members.find((m) => m.userId === authUser.id);
+        const isAdminMember = memberRec?.role === "ADMIN" || authUser.role === "ADMIN";
+        if (!isOwner && !isAdminMember) {
+          return res.status(403).json({ error: "Hanya pemilik atau admin yang dapat menghapus workspace ini" });
+        }
+      }
+    }
+
     const success = await deleteWorkspace(id);
     if (!success) {
       return res.status(404).json({ error: "Gagal menghapus workspace" });

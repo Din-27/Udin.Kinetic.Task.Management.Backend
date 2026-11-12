@@ -1,23 +1,19 @@
 import webpush from "web-push";
 import { prisma } from "./prisma.js";
 
-export const VAPID_PUBLIC_KEY = String(
-  process.env.NEXT_VAPID_PUBLIC_KEY ||
-    "BLeU_4VxmooOIxLVGlssH3fLzxMiQQ1RgAOVyS8xG8q3C7zRpkHDvFYXLhlXWgGyMdwfk3flVdIdtJyglgMVEj4",
-);
-export const VAPID_PRIVATE_KEY = String(
-  process.env.NEXT_VAPID_PRIVATE_KEY ||
-    "NKMKfmgjX0xYlWkl0swjgH7vf1bwRq7lxUTcMuM4QCI",
-);
+export const VAPID_PUBLIC_KEY = String(process.env.NEXT_VAPID_PUBLIC_KEY || "");
+export const VAPID_PRIVATE_KEY = String(process.env.NEXT_VAPID_PRIVATE_KEY || "");
 
-try {
-  webpush.setVapidDetails(
-    "mailto:admin@kinetic.dev",
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY,
-  );
-} catch (e) {
-  console.warn("Failed to set VAPID details in server-push:", e);
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(
+      "mailto:admin@kinetic.dev",
+      VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY,
+    );
+  } catch (e) {
+    console.warn("Failed to set VAPID details in server-push:", e);
+  }
 }
 
 export interface StoredSubscription {

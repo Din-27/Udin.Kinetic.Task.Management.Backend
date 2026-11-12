@@ -20,8 +20,9 @@ router.get("/", async (req: Request, res: Response) => {
     const workspaceId = (req.query.workspaceId as string) || undefined;
     const search = (req.query.search as string) || undefined;
     const status = (req.query.status as string) || undefined;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
 
-    const tasks = await getTasks(projectId, search, status, workspaceId);
+    const tasks = await getTasks(projectId, search, status, workspaceId, limit);
     return res.json(tasks);
   } catch (error: any) {
     return res.status(500).json({ error: error.message });

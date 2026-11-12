@@ -20,10 +20,30 @@ router.get("/", async (req: Request, res: Response) => {
       where.OR = orConditions;
       if (workspaceId) where.workspaceId = workspaceId;
     } else if (workspaceId) {
+      // Cari workspace terkait agar pencarian mencakup ID, slug, dan nama
+      const targetWs = await prisma.workspace
+        .findFirst({
+          where: {
+            OR: [{ id: workspaceId.trim() }, { slug: workspaceId.trim() }],
+          },
+        })
+        .catch(() => null);
+
+      const candidateKeys = Array.from(
+        new Set(
+          [
+            workspaceId.trim(),
+            targetWs?.id,
+            targetWs?.slug,
+            targetWs?.name,
+          ].filter((k): k is string => Boolean(k && k.trim()))
+        )
+      );
+
       where.status = "PENDING";
       where.OR = [
-        { workspaceId: { equals: workspaceId.trim(), mode: "insensitive" } },
-        { workspaceName: { equals: workspaceId.trim(), mode: "insensitive" } },
+        { workspaceId: { in: candidateKeys } },
+        { workspaceName: { in: candidateKeys } },
       ];
     }
 
@@ -66,16 +86,35 @@ router.post("/", async (req: Request, res: Response) => {
     const userIdNorm = (body.userId || "").trim();
     const wsTarget = (body.workspaceId || "").trim();
 
+    // Pastikan workspace ID merujuk ke record database yang valid (ID atau slug)
+    const targetWs = await prisma.workspace
+      .findFirst({
+        where: {
+          OR: [{ id: wsTarget }, { slug: wsTarget }],
+        },
+      })
+      .catch(() => null);
+
+    const resolvedWsId = targetWs ? targetWs.id : wsTarget;
+    const resolvedWsName = targetWs ? targetWs.name : (body.workspaceName || "Workspace");
+
     // Cek apakah permintaan pending sudah ada di DB
     const existing = await prisma.joinRequest.findFirst({
       where: {
         status: "PENDING",
-        workspaceId: { equals: wsTarget, mode: "insensitive" as const },
         OR: [
-          ...(userIdNorm ? [{ userId: userIdNorm }] : []),
-          ...(emailNorm
-            ? [{ userEmail: { equals: emailNorm, mode: "insensitive" as const } }]
-            : []),
+          { workspaceId: { equals: resolvedWsId, mode: "insensitive" as const } },
+          { workspaceId: { equals: wsTarget, mode: "insensitive" as const } },
+        ],
+        AND: [
+          {
+            OR: [
+              ...(userIdNorm ? [{ userId: userIdNorm }] : []),
+              ...(emailNorm
+                ? [{ userEmail: { equals: emailNorm, mode: "insensitive" as const } }]
+                : []),
+            ],
+          },
         ],
       },
     });
@@ -98,7 +137,7 @@ router.post("/", async (req: Request, res: Response) => {
     }
 
     const newId = body.id || `req-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const wsName = body.workspaceName || "Workspace";
+    const wsName = resolvedWsName;
     const userName = body.userName || (emailNorm ? emailNorm.split("@")[0] : "User");
     const userAvatar = body.userAvatar || "";
     const requestedAt = body.requestedAt ? new Date(body.requestedAt) : new Date();
@@ -106,6 +145,7 @@ router.post("/", async (req: Request, res: Response) => {
     const created = await prisma.joinRequest.upsert({
       where: { id: newId },
       update: {
+        workspaceId: resolvedWsId,
         workspaceName: wsName,
         userName,
         userAvatar,
@@ -113,7 +153,7 @@ router.post("/", async (req: Request, res: Response) => {
       },
       create: {
         id: newId,
-        workspaceId: wsTarget,
+        workspaceId: resolvedWsId,
         workspaceName: wsName,
         userId: userIdNorm || `usr-${Date.now()}`,
         userName,
@@ -175,8 +215,10 @@ router.patch("/", async (req: Request, res: Response) => {
     // Jika di-approve, langsung daftarkan user ke WorkspaceMember di DB
     if (targetStatus === "APPROVED" && r.workspaceId && (r.userId || r.userEmail)) {
       try {
-        const existingWs = await prisma.workspace.findUnique({
-          where: { id: r.workspaceId },
+        const existingWs = await prisma.workspace.findFirst({
+          where: {
+            OR: [{ id: r.workspaceId }, { slug: r.workspaceId }],
+          },
         });
         if (!existingWs) {
           return res.status(404).json({
@@ -207,13 +249,13 @@ router.patch("/", async (req: Request, res: Response) => {
           await prisma.workspaceMember.upsert({
             where: {
               workspaceId_userId: {
-                workspaceId: r.workspaceId,
+                workspaceId: existingWs.id,
                 userId: dbUserId,
               },
             },
             update: { role: "MEMBER" },
             create: {
-              workspaceId: r.workspaceId,
+              workspaceId: existingWs.id,
               userId: dbUserId,
               role: "MEMBER",
             },

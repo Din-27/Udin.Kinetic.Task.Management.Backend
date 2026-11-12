@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { getUsers } from "../lib/data-service.js";
 import { prisma } from "../lib/prisma.js";
+import { authenticateRequest } from "./auth.js";
 
 const router = Router();
 
@@ -15,6 +16,7 @@ router.get("/", async (_req: Request, res: Response) => {
 
 router.delete("/", async (req: Request, res: Response) => {
   try {
+    const authUser = await authenticateRequest(req);
     const userId =
       (req.query.id as string) ||
       (req.query.userId as string) ||
@@ -23,6 +25,10 @@ router.delete("/", async (req: Request, res: Response) => {
 
     if (!userId) {
       return res.status(400).json({ error: "userId wajib disertakan" });
+    }
+
+    if (authUser && authUser.id !== userId && authUser.role !== "ADMIN") {
+      return res.status(403).json({ error: "Tidak memiliki hak akses untuk menghapus pengguna ini" });
     }
 
     await prisma.account.deleteMany({ where: { userId } }).catch(() => { });

@@ -522,7 +522,8 @@ export async function getTasks(
   projectId?: string,
   search?: string,
   status?: string,
-  workspaceId?: string
+  workspaceId?: string,
+  limit: number = 300
 ): Promise<Task[]> {
   try {
     const where: any = {};
@@ -539,8 +540,10 @@ export async function getTasks(
       ];
     }
 
+    const safeLimit = Math.min(Math.max(limit, 1), 1000);
     const dbTasks = await prisma.task.findMany({
       where,
+      take: safeLimit,
       include: {
         assignee: true,
         creator: true,
@@ -879,7 +882,8 @@ export async function addComment(
 export async function getChatMessages(
   workspaceId?: string,
   projectId?: string | null,
-  type?: "PROJECT_CHAT" | "TEAM_DISCUSSION" | string
+  type?: "PROJECT_CHAT" | "TEAM_DISCUSSION" | string,
+  limit: number = 200
 ): Promise<ChatMessage[]> {
   try {
     const where: any = {};
@@ -900,8 +904,10 @@ export async function getChatMessages(
       if (!type) where.type = "TEAM_DISCUSSION";
     }
 
+    const safeLimit = Math.min(Math.max(limit, 1), 500);
     const dbChat = await prisma.chatMessage.findMany({
       where,
+      take: safeLimit,
       include: { sender: true },
       orderBy: { createdAt: "asc" },
     });

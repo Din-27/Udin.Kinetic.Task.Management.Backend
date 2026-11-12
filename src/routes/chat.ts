@@ -71,7 +71,8 @@ router.get("/", async (req: Request, res: Response) => {
     const workspaceId = (req.query.workspaceId as string) || undefined;
     const projectId = (req.query.projectId as string) || undefined;
     const type = (req.query.type as string) || undefined;
-    const messages = await getChatMessages(workspaceId, projectId, type);
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const messages = await getChatMessages(workspaceId, projectId, type, limit);
     return res.json(messages);
   } catch (error: any) {
     return res.status(500).json({ error: error.message });

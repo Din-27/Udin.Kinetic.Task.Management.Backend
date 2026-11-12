@@ -70,14 +70,16 @@ export class FileParserService {
    */
   private static async parsePdf(buffer: Buffer): Promise<string> {
     try {
-      const pdfString = buffer.toString("latin1");
+      const maxSlice = Math.min(buffer.length, 5 * 1024 * 1024);
+      const pdfString = buffer.subarray(0, maxSlice).toString("latin1");
       const textBlocks: string[] = [];
 
       // Regex untuk menangkap stream teks di PDF: BT (Begin Text) hingga ET (End Text)
       const btMatches = pdfString.match(/BT[\s\S]*?ET/g);
 
       if (btMatches && btMatches.length > 0) {
-        for (const block of btMatches) {
+        for (let i = 0; i < Math.min(btMatches.length, 2000); i++) {
+          const block = btMatches[i];
           // Cari string dalam tanda kurung: (Teks yang diekstrak)
           const textMatches = block.match(/\((.*?)\)/g);
           if (textMatches) {
@@ -96,10 +98,10 @@ export class FileParserService {
 
       // Fallback: ekstrak semua readable string berurutan
       const readableStrings = pdfString.match(/[A-Za-z0-9\s.,!?:;'"\-–—()]{4,}/g);
-      return (readableStrings || []).join(" ").trim();
+      return (readableStrings || []).slice(0, 5000).join(" ").trim();
     } catch (err) {
       console.warn("Gagal parse PDF via regex extractor, fallback ke string scanner:", err);
-      return buffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ");
+      return buffer.subarray(0, 1024 * 1024).toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ");
     }
   }
 
@@ -109,20 +111,22 @@ export class FileParserService {
    */
   private static async parseDocx(buffer: Buffer): Promise<string> {
     try {
-      const raw = buffer.toString("latin1");
+      const maxSlice = Math.min(buffer.length, 5 * 1024 * 1024);
+      const raw = buffer.subarray(0, maxSlice).toString("latin1");
       // Cari fragmen XML paragraf w:t (Word Text element)
       const textMatches = raw.match(/<w:t[^>]*>(.*?)<\/w:t>/g);
       if (textMatches && textMatches.length > 0) {
         const clean = textMatches
+          .slice(0, 3000)
           .map((m) => m.replace(/<[^>]+>/g, ""))
           .join(" ");
         return clean.trim();
       }
 
-      return buffer.toString("utf-8").replace(/<[^>]+>/g, " ").replace(/[^\x20-\x7E\n\r\t]/g, " ");
+      return buffer.subarray(0, 1024 * 1024).toString("utf-8").replace(/<[^>]+>/g, " ").replace(/[^\x20-\x7E\n\r\t]/g, " ");
     } catch (err) {
       console.warn("Gagal parse DOCX, fallback:", err);
-      return buffer.toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ");
+      return buffer.subarray(0, 1024 * 1024).toString("utf-8").replace(/[^\x20-\x7E\n\r\t]/g, " ");
     }
   }
 }
